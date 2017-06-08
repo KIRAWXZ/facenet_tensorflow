@@ -91,3 +91,11 @@
 	
 	    np.random.shuffle(triplets)
 	    return triplets, num_trips, len(triplets)
+
+#### cluster method 
+    
+code: src/aiphotoface
+层次聚类
+rankorder1
+rankorder2
+rankorder3
