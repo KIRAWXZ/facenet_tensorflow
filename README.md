@@ -1,53 +1,93 @@
-# Face Recognition using Tensorflow
-This is a TensorFlow implementation of the face recognizer described in the paper
-["FaceNet: A Unified Embedding for Face Recognition and Clustering"](http://arxiv.org/abs/1503.03832). The project also uses ideas from the paper ["A Discriminative Feature Learning Approach for Deep Face Recognition"](http://ydwen.github.io/papers/WenECCV16.pdf) as well as the paper ["Deep Face Recognition"](http://www.robots.ox.ac.uk/~vgg/publications/2015/Parkhi15/parkhi15.pdf) from the [Visual Geometry Group](http://www.robots.ox.ac.uk/~vgg/) at Oxford.
+## facenet （TensorFlow version） ##
 
-## Tensorflow release
-Currently this repo is compatible with Tensorflow r1.0.
+#### source git link ####
 
-## News
-| Date     | Update |
-|----------|--------|
-| 2017-03-02 | Added pretrained models that generate 128-dimensional embeddings.|
-| 2017-02-22 | Updated to Tensorflow r1.0. Added Continuous Integration using Travis-CI.|
-| 2017-02-03 | Added models where only trainable variables has been stored in the checkpoint. These are therefore significantly smaller. |
-| 2017-01-27 | Added a model trained on a subset of the MS-Celeb-1M dataset. The LFW accuracy of this model is around 0.994. |
-| 2017&#8209;01&#8209;02 | Updated to code to run with Tensorflow r0.12. Not sure if it runs with older versions of Tensorflow though.   |
+[https://github.com/davidsandberg/facenet](https://github.com/davidsandberg/facenet)
 
-## Pre-trained models
-| Model name      | LFW accuracy | Training dataset |
-|-----------------|--------------|------------------|
-| [20170214-092102](https://drive.google.com/open?id=0B5MzpY9kBtDVS214bHdvd2RGS3M) | 0.986        | CASIA-WebFace    |
-| [20170216-091149](https://drive.google.com/open?id=0B5MzpY9kBtDVTGZjcWkzT3pldDA) | 0.993        | MS-Celeb-1M      |
+#### my cost function ####
 
-## Inspiration
-The code is heavly inspired by the [OpenFace](https://github.com/cmusatyalab/openface) implementation.
+	# f1(max) - f2(min)
+	def triplet_loss(anchor, positive, negative, alpha):
+	    """Calculate the triplet loss according to the FaceNet paper
+	    Args:
+	      anchor: the embeddings for the anchor images.
+	      positive: the embeddings for the positive images.
+	      negative: the embeddings for the negative images.
+	    Returns:
+	      the triplet loss according to the FaceNet paper as a float tensor.
+	    """
+	
+	    with tf.variable_scope('triplet_loss'):
+	
+	        inner_thred = tf.constant(1, dtype=tf.float32)
+	        outer_thred = tf.constant(2, dtype=tf.float32)
+	
+	        pos_dist = tf.reduce_sum(tf.square(tf.subtract(anchor, positive)), 1)
+	        neg_dist = tf.reduce_sum(tf.square(tf.subtract(anchor, negative)), 1)
+	        # positive
+	        f1 = tf.maximum(pos_dist, inner_thred)
+	        # negative
+	        f2 = tf.minimum(neg_dist, outer_thred)
+	        basic_loss = tf.add(tf.subtract(f1, inner_thred), tf.subtract(outer_thred, f2))
+	
+	        loss = tf.reduce_mean(basic_loss, 0)
+	
+	    return loss
 
-## Training data
-The [CASIA-WebFace](http://www.cbsr.ia.ac.cn/english/CASIA-WebFace-Database.html) dataset has been used for training. This training set consists of total of 453 453 images over 10 575 identities after face detection. Some performance improvement has been seen if the dataset has been filtered before training. Some more information about how this was done will come later.
-The best performing model has been trained on a subset of the [MS-Celeb-1M](https://www.microsoft.com/en-us/research/project/ms-celeb-1m-challenge-recognizing-one-million-celebrities-real-world/) dataset. This dataset is significantly larger but also contains significantly more label noise, and therefore it is crucial to apply dataset filtering on this dataset.
+#### my select triplet function ####
 
-## Pre-processing
-
-### Face alignment using MTCNN
-One problem with the above approach seems to be that the Dlib face detector misses some of the hard examples (partial occlusion, siluettes, etc). This makes the training set to "easy" which causes the model to perform worse on other benchmarks.
-To solve this, other face landmark detectors has been tested. One face landmark detector that has proven to work very well in this setting is the
-[Multi-task CNN](https://kpzhang93.github.io/MTCNN_face_detection_alignment/index.html). A Matlab/Caffe implementation can be found [here](https://github.com/kpzhang93/MTCNN_face_detection_alignment) and this has been used for face alignment with very good results. A Python/Tensorflow implementation of MTCNN can be found [here](https://github.com/davidsandberg/facenet/tree/master/src/align). This implementation does not give identical results to the Matlab/Caffe implementation but the performance is very similar.
-
-## Running training
-Currently, the best results are achieved by training the model as a classifier with the addition of [Center loss](http://ydwen.github.io/papers/WenECCV16.pdf). Details on how to train a model as a classifier can be found on the page [Classifier training of Inception-ResNet-v1](https://github.com/davidsandberg/facenet/wiki/Classifier-training-of-inception-resnet-v1).
-
-## Pre-trained model
-### Inception-ResNet-v1 model
-Currently, the best performing model is an Inception-Resnet-v1 model trained on CASIA-Webface aligned with [MTCNN](https://github.com/davidsandberg/facenet/tree/master/src/align).
-
-## Performance
-The accuracy on LFW for the model [20170216-091149](https://drive.google.com/open?id=0B5MzpY9kBtDVSkRSZjFBSDQtMzA) is 0.993+-0.004. A description of how to run the test can be found on the page [Validate on LFW](https://github.com/davidsandberg/facenet/wiki/Validate-on-lfw).
-
-## train_lefs
-    
-    // for resnetv1 
-    bash resnetv1_start.sh
-     
-    // for resnetv2
-    bash resnetv2_start.sh
+	# cqs add changed
+	def select_triplets(embeddings, nrof_images_per_class, image_paths, people_per_batch, alpha):
+	    """ Select the triplets for training
+	    """
+	    trip_idx = 0
+	    emb_start_idx = 0
+	    num_trips = 0
+	    triplets = []
+	
+	    # VGG Face: Choosing good triplets is crucial and should strike a balance between
+	    #  selecting informative (i.e. challenging) examples and swamping training with examples that
+	    #  are too hard. This is achieve by extending each pair (a, p) to a triplet (a, p, n) by sampling
+	    #  the image n at random, but only between the ones that violate the triplet loss margin. The
+	    #  latter is a form of hard-negative mining, but it is not as aggressive (and much cheaper) than
+	    #  choosing the maximally violating example, as often done in structured output learning.
+	
+	    for i in range(people_per_batch):
+	        nrof_images = int(nrof_images_per_class[i])
+	        for j in range(1, nrof_images):
+	            a_idx = emb_start_idx + j - 1
+	            neg_dists_sqr = np.sum(np.square(embeddings[a_idx] - embeddings), 1)
+	            neg_dists_sqr[emb_start_idx:emb_start_idx + nrof_images] = np.NaN
+	            # print("qingsong", (neg_dists_sqr[0:emb_start_idx] + neg_dists_sqr[emb_start_idx+nrof_images]).shape)
+	            new_neg_dists_sqr = np.append(neg_dists_sqr[0:emb_start_idx], neg_dists_sqr[emb_start_idx+nrof_images:])
+	            neg_dists_sqr_average = np.mean(new_neg_dists_sqr)
+	            all_neg = np.where(neg_dists_sqr_average <= 2)[0]
+	            nrof_random_negs = all_neg.shape[0]
+	            for pair in range(j, nrof_images):  # For every possible positive pair.
+	                p_idx = emb_start_idx + pair
+	                pos_dist_sqr = np.sum(np.square(embeddings[a_idx] - embeddings[p_idx]))
+	
+	                if nrof_random_negs > 0 or pos_dist_sqr >= 1:
+	                    if nrof_random_negs == 0:
+	                        all_idxs = set(range(embeddings.shape[0]))
+	                        pos_idxs = set(np.array(range(0, nrof_images)) + emb_start_idx)
+	                        n_idx = list(all_idxs - pos_idxs)[0]
+	                        # print("all_idxs", all_idxs, "pos_idxs", pos_idxs, "n_idx", n_idx)
+	                    else:
+	                        # rnd_idx = np.random.randint(nrof_random_negs)
+	                        # n_idx = all_neg[rnd_idx]
+	                        n_idx = np.nanargmin(new_neg_dists_sqr)
+	                        if n_idx >= emb_start_idx:
+	                            n_idx = n_idx + nrof_images
+	                    print("nrof_random_negs percent:", nrof_random_negs / len(new_neg_dists_sqr), "neg_dists_sqr_average", neg_dists_sqr_average, "pos_dist_sqr", pos_dist_sqr)
+	                    triplets.append((image_paths[a_idx], image_paths[p_idx], image_paths[n_idx]))
+	                    # print('Triplet %d: (%d, %d, %d), pos_dist=%2.6f, neg_dist=%2.6f (%d, %d, %d, %d, %d)' %
+	                    #    (trip_idx, a_idx, p_idx, n_idx, pos_dist_sqr, neg_dists_sqr[n_idx], nrof_random_negs, rnd_idx, i, j, emb_start_idx))
+	                    trip_idx += 1
+	
+	                num_trips += 1
+	
+	        emb_start_idx += nrof_images
+	
+	    np.random.shuffle(triplets)
+	    return triplets, num_trips, len(triplets)
